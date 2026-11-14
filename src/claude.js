@@ -7,6 +7,7 @@ Rules:
 - Choose product templates ONLY from the provided catalog (by template_id).
 - For each line list ONLY attributes the customer explicitly stated, using the exact attribute name from the catalog and, when possible, the exact value name from the catalog. Add a short evidence quote from the email.
 - Do NOT guess attributes the customer did not mention; the system fills defaults.
+- Use an exact catalog value name only when the customer's wording clearly identifies exactly ONE catalog value. If the customer used a generic word that fits several catalog values (e.g. "black", "white", "oak"), put the customer's own word in "value" exactly as written; the system then picks the first matching option and asks the team to confirm. Do not pick between the options yourself.
 - If a requested value is not in the catalog, still report what the customer said in "value"; do not invent a catalog value.
 - If a request is unclear or something cannot be quoted, put it in "questions" (for the customer/sales team).
 - Quantities default to 1 if not stated.
