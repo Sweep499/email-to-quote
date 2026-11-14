@@ -47,6 +47,37 @@ export function resolveConfig(template, stated) {
   return { config, unmatched };
 }
 
+/**
+ * Customer requests that could not be honoured for one line: values that are not
+ * in the catalog (a default was used instead) and attributes the product does not have.
+ * @returns string[]  e.g. ['Exterior Finish: customer asked for "Black" - default used (Chalk White)']
+ */
+export function unmatchedRequests(config, unmatched) {
+  const flags = [];
+  for (const c of config) {
+    if (String(c.source).startsWith("default (unmatched")) {
+      const m = /Customer asked for "([^"]*)"/.exec(c.evidence || "");
+      flags.push(`${c.attribute}: customer asked for "${m ? m[1] : "?"}" - default used (${c.value})`);
+    }
+  }
+  for (const u of unmatched || []) flags.push(`${u.attribute}: customer asked for "${u.value}" - not an option on this product`);
+  return flags;
+}
+
+/**
+ * Compact text form of the catalog for the prompt (much fewer tokens than JSON).
+ * Names must stay exact: the model has to echo them back.
+ */
+export function formatCatalog(catalog) {
+  return catalog
+    .map(
+      (t) =>
+        `[${t.id}] ${t.name}\n` +
+        t.attributes.map((a) => `- ${a.name}: ${a.values.map((v) => v.name).join(" | ")}`).join("\n")
+    )
+    .join("\n\n");
+}
+
 export function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }

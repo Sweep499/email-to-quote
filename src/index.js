@@ -1,6 +1,6 @@
 import { Odoo } from "./odoo.js";
 import { extractRequest } from "./claude.js";
-import { resolveConfig, esc, stripHtml } from "./resolve.js";
+import { resolveConfig, unmatchedRequests, esc, stripHtml } from "./resolve.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -152,16 +152,20 @@ async function processLead(env, leadId) {
       continue;
     }
     const label = (l.quote_label || "").trim() || "Quote";
-    if (!groups.has(label)) groups.set(label, { quoteLines: [], rows: [], orderName: null });
+    if (!groups.has(label)) groups.set(label, { quoteLines: [], flags: [], rows: [], orderName: null });
     const g = groups.get(label);
 
     const { config, unmatched } = resolveConfig(tmpl, l.stated_attributes);
-    for (const u of unmatched) warnings.push(`${tmpl.name}: customer mentioned "${u.attribute}: ${u.value}" - no such attribute`);
     for (const c of config) g.rows.push({ product: tmpl.name, qty: l.quantity, ...c });
+    // Requests we could not honour (value not in catalog, unknown attribute): the line is still
+    // created with defaults, but marked so nobody sends it unchecked.
+    const flags = unmatchedRequests(config, unmatched);
+    for (const f of flags) warnings.push(`${tmpl.name}: ${f}`);
 
     const { id: variantId, reason } = await findVariant(odoo, tmpl.id, config.map((c) => c.valueId).filter(Boolean));
     if (variantId) {
       g.quoteLines.push([0, 0, { product_id: variantId, product_uom_qty: l.quantity || 1 }]);
+      g.flags.push(flags);
     } else {
       warnings.push(`${tmpl.name}: no quote line - ${reason}. Add it manually.`);
     }
@@ -189,8 +193,21 @@ async function processLead(env, leadId) {
         ...(multi ? { client_order_ref: label } : {}),
         order_line: g.quoteLines,
       }]);
-      const [order] = await odoo.call("sale.order", "read", [[orderId], ["name"]]);
+      const [order] = await odoo.call("sale.order", "read", [[orderId], ["name", "order_line"]]);
       g.orderName = order.name;
+      // Lines come back in creation order; mark the ones that need a human decision.
+      const lineIds = [...order.order_line].sort((a, b) => a - b);
+      for (let i = 0; i < g.flags.length; i++) {
+        if (!g.flags[i].length || !lineIds[i]) continue;
+        try {
+          const [ln] = await odoo.call("sale.order.line", "read", [[lineIds[i]], ["name"]]);
+          await odoo.call("sale.order.line", "write", [[lineIds[i]], {
+            name: `${ln.name}\n⚠ CHECK BEFORE SENDING:\n${g.flags[i].map((f) => `- ${f}`).join("\n")}`,
+          }]);
+        } catch (e) {
+          warnings.push(`Could not mark line ${i + 1} of ${order.name} for review: ${e.message}`);
+        }
+      }
       created.push({ label, name: order.name });
     }
   }
