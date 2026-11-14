@@ -80,10 +80,27 @@ async function findVariant(odoo, templateId, valueIds) {
     ["id", "product_attribute_value_id"]
   );
   const ptavIds = ptavs.map((p) => p.id);
-  if (ptavIds.length !== valueIds.length) return null;
+  if (ptavIds.length !== valueIds.length) {
+    return { id: null, reason: "some chosen values are not enabled on this product template" };
+  }
   const domain = [["product_tmpl_id", "=", templateId], ...ptavIds.map((id) => ["product_template_attribute_value_ids", "=", id])];
+  // Also match variants that have exactly this many attribute values (not a superset).
   const found = await odoo.search_read("product.product", domain, ["id"], { limit: 1 });
-  return found[0]?.id ?? null;
+  if (found[0]) return { id: found[0].id, reason: null };
+
+  // Dynamic variants: the combination may simply not exist yet. Ask Odoo to create it.
+  // The public method's argument format differs between versions, so try both forms.
+  let lastError = "";
+  for (const arg of [JSON.stringify(ptavIds), ptavIds]) {
+    try {
+      const id = await odoo.call("product.template", "create_product_variant", [[templateId], arg]);
+      if (id) return { id, reason: null };
+      lastError = "Odoo refused to create the variant (combination excluded or not allowed)";
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+  return { id: null, reason: `variant does not exist and could not be created: ${lastError}` };
 }
 
 async function processLead(env, leadId) {
@@ -146,11 +163,11 @@ async function processLead(env, leadId) {
     for (const u of unmatched) warnings.push(`${tmpl.name}: customer mentioned "${u.attribute}: ${u.value}" - no such attribute`);
     for (const c of config) g.rows.push({ product: tmpl.name, qty: l.quantity, ...c });
 
-    const variantId = await findVariant(odoo, tmpl.id, config.map((c) => c.valueId).filter(Boolean));
+    const { id: variantId, reason } = await findVariant(odoo, tmpl.id, config.map((c) => c.valueId).filter(Boolean));
     if (variantId) {
       g.quoteLines.push([0, 0, { product_id: variantId, product_uom_qty: l.quantity || 1 }]);
     } else {
-      warnings.push(`${tmpl.name}: no matching variant for the configuration (dynamic/excluded combination?) - add manually`);
+      warnings.push(`${tmpl.name}: no quote line - ${reason}. Add it manually.`);
     }
     if (l.notes) warnings.push(`${tmpl.name}: ${l.notes}`);
   }
