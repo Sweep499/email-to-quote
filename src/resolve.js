@@ -17,6 +17,7 @@ export function resolveConfig(template, stated) {
     let chosen = null;
     let source = "default";
     let evidence = "";
+    let assumed = null;
 
     if (hit) {
       used.add(hit);
@@ -26,9 +27,22 @@ export function resolveConfig(template, stated) {
         source = "stated";
         evidence = hit.evidence || "";
       } else {
-        // Customer mentioned the attribute but value is not one of ours -> keep default, flag it.
-        evidence = `Customer asked for "${hit.value}" (not an available value). ${hit.evidence || ""}`.trim();
-        source = "default (unmatched request)";
+        // Not an exact value. Catalog values that contain the customer's word(s) as whole words
+        // (e.g. "black" -> "Charcoal Black (RAL 8022)", "Textile Black (...)") are candidates.
+        // Assume the lowest-id one and ask for confirmation. No candidates -> keep default, flag it.
+        const word = new RegExp(`(^|[^\\p{L}\\p{N}])${String(hit.value).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}\\p{N}])`, "iu");
+        const candidates = norm(hit.value)
+          ? attr.values.filter((v) => word.test(v.name)).sort((a, b) => a.id - b.id)
+          : [];
+        if (candidates.length) {
+          chosen = candidates[0];
+          source = "assumed - please confirm";
+          assumed = { requested: hit.value, alternatives: candidates.slice(1).map((v) => v.name) };
+          evidence = `Customer said "${hit.value}". ${hit.evidence || ""}`.trim();
+        } else {
+          evidence = `Customer asked for "${hit.value}" (not an available value). ${hit.evidence || ""}`.trim();
+          source = "default (unmatched request)";
+        }
       }
     }
     if (!chosen) chosen = attr.values.find((v) => v.is_default) || attr.values[0] || null;
@@ -40,6 +54,7 @@ export function resolveConfig(template, stated) {
       valueId: chosen ? chosen.id : null,
       source,
       evidence,
+      ...(assumed ? { assumed } : {}),
     });
   }
 
@@ -55,7 +70,10 @@ export function resolveConfig(template, stated) {
 export function unmatchedRequests(config, unmatched) {
   const flags = [];
   for (const c of config) {
-    if (String(c.source).startsWith("default (unmatched")) {
+    if (c.assumed) {
+      const alt = c.assumed.alternatives.length ? ` Other options: ${c.assumed.alternatives.join("; ")}.` : "";
+      flags.push(`${c.attribute}: customer said "${c.assumed.requested}" - assumed ${c.value}, please confirm.${alt}`);
+    } else if (String(c.source).startsWith("default (unmatched")) {
       const m = /Customer asked for "([^"]*)"/.exec(c.evidence || "");
       flags.push(`${c.attribute}: customer asked for "${m ? m[1] : "?"}" - default used (${c.value})`);
     }

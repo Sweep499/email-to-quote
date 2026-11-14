@@ -36,6 +36,30 @@ assert.match(flags[0], /Color: customer asked for "Purple" - default used \(Oak\
 assert.match(flags[1], /Wheels/);
 assert.deepEqual(unmatchedRequests(resolveConfig(tmpl, []).config, []), []);
 
+// generic word matching several catalog values -> lowest id assumed, alternatives listed, flagged
+const tmpl2 = {
+  id: 2, name: "Work",
+  attributes: [
+    { id: 20, name: "Exterior Finish", values: [
+      { id: 205, name: "Chalk White (RAL 9010)" },
+      { id: 203, name: "Charcoal Black (RAL 8022)" },
+      { id: 204, name: "Textile Black (Zero ZER33 Climb)" },
+    ] },
+  ],
+};
+r = resolveConfig(tmpl2, [{ attribute: "Exterior Finish", value: "black", evidence: "should be black" }]);
+assert.equal(r.config[0].value, "Charcoal Black (RAL 8022)");
+assert.match(r.config[0].source, /assumed/);
+assert.deepEqual(r.config[0].assumed.alternatives, ["Textile Black (Zero ZER33 Climb)"]);
+const f2 = unmatchedRequests(r.config, r.unmatched);
+assert.equal(f2.length, 1);
+assert.match(f2[0], /assumed Charcoal Black \(RAL 8022\), please confirm\. Other options: Textile Black/);
+// a word that is only part of another word must not match ("lack" vs "Black"); regex chars are safe
+r = resolveConfig(tmpl2, [{ attribute: "Exterior Finish", value: "lack", evidence: "x" }]);
+assert.match(r.config[0].source, /unmatched/);
+r = resolveConfig(tmpl2, [{ attribute: "Exterior Finish", value: "(", evidence: "x" }]);
+assert.match(r.config[0].source, /unmatched/);
+
 // compact catalog keeps ids and exact names
 const cat = formatCatalog([{ ...tmpl, attributes: tmpl.attributes }]);
 assert.match(cat, /^\[1\] Meet 2\n- Color: Oak \| Black\n- Door: Standard \| Sliding$/);

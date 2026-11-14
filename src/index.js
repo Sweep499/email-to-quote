@@ -161,6 +161,11 @@ async function processLead(env, leadId) {
     // created with defaults, but marked so nobody sends it unchecked.
     const flags = unmatchedRequests(config, unmatched);
     for (const f of flags) warnings.push(`${tmpl.name}: ${f}`);
+    for (const c of config) {
+      if (c.assumed) {
+        result.questions.push(`Please confirm with the customer: ${tmpl.name} ${c.attribute} - they said "${c.assumed.requested}", the quote uses ${c.value}.`);
+      }
+    }
 
     const { id: variantId, reason } = await findVariant(odoo, tmpl.id, config.map((c) => c.valueId).filter(Boolean));
     if (variantId) {
