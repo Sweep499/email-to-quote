@@ -3,7 +3,7 @@ main = "src/index.js"
 compatibility_date = "2025-01-01"
 
 [vars]
-CLAUDE_MODEL = "claude-sonnet-5-5"
+CLAUDE_MODEL = "claude-haiku-5-5"
 # Set to "true" to only post the extraction note in chatter (no draft quote)
 DRY_RUN = "false"
 
