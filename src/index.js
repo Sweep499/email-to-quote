@@ -89,12 +89,18 @@ async function findVariant(odoo, templateId, valueIds) {
 async function processLead(env, leadId) {
   const odoo = new Odoo(env);
 
-  const [lead] = await odoo.search_read(
-    "crm.lead",
-    [["id", "=", leadId]],
-    ["name", "email_from", "contact_name", "partner_name", "partner_id", "team_id", "user_id", "description"]
-  );
-  if (!lead) throw new Error(`Lead ${leadId} not found`);
+  // The webhook may fire before the creating transaction is committed, so the lead
+  // can be invisible for a moment. Retry before giving up.
+  let lead;
+  for (let attempt = 0; attempt < 8 && !lead; attempt++) {
+    [lead] = await odoo.search_read(
+      "crm.lead",
+      [["id", "=", leadId]],
+      ["name", "email_from", "contact_name", "partner_name", "partner_id", "team_id", "user_id", "description"]
+    );
+    if (!lead) await new Promise((r) => setTimeout(r, 2500));
+  }
+  if (!lead) throw new Error(`Lead ${leadId} not found (check the API user can access the lead's team)`);
 
   // Idempotency: do nothing if a quote already exists for this opportunity.
   const existing = await odoo.call("sale.order", "search_count", [[["opportunity_id", "=", leadId]]]);
