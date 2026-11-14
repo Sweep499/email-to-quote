@@ -128,8 +128,8 @@ async function processLead(env, leadId) {
   const catalog = await loadCatalog(odoo);
   const { result, usage } = await extractRequest(env, `Subject: ${subject}\n\n${emailText}`, catalog);
 
-  const quoteLines = [];
-  const rows = [];
+  // One group per quotation (customer may ask for several separate offers).
+  const groups = new Map(); // label -> { quoteLines, rows, orderName }
   const warnings = [];
 
   for (const l of result.lines) {
@@ -138,22 +138,27 @@ async function processLead(env, leadId) {
       warnings.push(`Unknown product template id ${l.template_id}`);
       continue;
     }
+    const label = (l.quote_label || "").trim() || "Quote";
+    if (!groups.has(label)) groups.set(label, { quoteLines: [], rows: [], orderName: null });
+    const g = groups.get(label);
+
     const { config, unmatched } = resolveConfig(tmpl, l.stated_attributes);
     for (const u of unmatched) warnings.push(`${tmpl.name}: customer mentioned "${u.attribute}: ${u.value}" - no such attribute`);
-    for (const c of config) rows.push({ product: tmpl.name, qty: l.quantity, ...c });
+    for (const c of config) g.rows.push({ product: tmpl.name, qty: l.quantity, ...c });
 
     const variantId = await findVariant(odoo, tmpl.id, config.map((c) => c.valueId).filter(Boolean));
     if (variantId) {
-      quoteLines.push([0, 0, { product_id: variantId, product_uom_qty: l.quantity || 1 }]);
+      g.quoteLines.push([0, 0, { product_id: variantId, product_uom_qty: l.quantity || 1 }]);
     } else {
       warnings.push(`${tmpl.name}: no matching variant for the configuration (dynamic/excluded combination?) - add manually`);
     }
     if (l.notes) warnings.push(`${tmpl.name}: ${l.notes}`);
   }
 
-  let orderName = null;
+  const multi = groups.size > 1;
   const dry = env.DRY_RUN === "true";
-  if (!dry && quoteLines.length) {
+  const created = []; // { label, name }
+  if (!dry && [...groups.values()].some((g) => g.quoteLines.length)) {
     let partnerId = lead.partner_id?.[0];
     if (!partnerId) {
       partnerId = await odoo.call("res.partner", "create", [{
@@ -162,37 +167,51 @@ async function processLead(env, leadId) {
       }]);
       await odoo.call("crm.lead", "write", [[leadId], { partner_id: partnerId }]);
     }
-    const orderId = await odoo.call("sale.order", "create", [{
-      partner_id: partnerId,
-      opportunity_id: leadId,
-      team_id: lead.team_id?.[0] || false,
-      order_line: quoteLines,
-    }]);
-    const [order] = await odoo.call("sale.order", "read", [[orderId], ["name"]]);
-    orderName = order.name;
+    for (const [label, g] of groups) {
+      if (!g.quoteLines.length) continue;
+      const orderId = await odoo.call("sale.order", "create", [{
+        partner_id: partnerId,
+        opportunity_id: leadId,
+        team_id: lead.team_id?.[0] || false,
+        ...(multi ? { client_order_ref: label } : {}),
+        order_line: g.quoteLines,
+      }]);
+      const [order] = await odoo.call("sale.order", "read", [[orderId], ["name"]]);
+      g.orderName = order.name;
+      created.push({ label, name: order.name });
+    }
   }
 
   // Review note in chatter
-  const table = rows.length
-    ? `<table border="1" cellpadding="4" style="border-collapse:collapse"><tr><th>Product</th><th>Qty</th><th>Attribute</th><th>Value</th><th>Source</th><th>Evidence</th></tr>${rows
-        .map((r) => `<tr><td>${esc(r.product)}</td><td>${esc(r.qty)}</td><td>${esc(r.attribute)}</td><td>${esc(r.value)}</td><td>${esc(r.source)}</td><td>${esc(r.evidence)}</td></tr>`)
-        .join("")}</table>`
+  const tableFor = (rows) =>
+    `<table border="1" cellpadding="4" style="border-collapse:collapse"><tr><th>Product</th><th>Qty</th><th>Attribute</th><th>Value</th><th>Source</th><th>Evidence</th></tr>${rows
+      .map((r) => `<tr><td>${esc(r.product)}</td><td>${esc(r.qty)}</td><td>${esc(r.attribute)}</td><td>${esc(r.value)}</td><td>${esc(r.source)}</td><td>${esc(r.evidence)}</td></tr>`)
+      .join("")}</table>`;
+  const tables = groups.size
+    ? [...groups]
+        .map(([label, g]) =>
+          (multi ? `<p><b>${esc(label)}</b>${g.orderName ? ` - ${esc(g.orderName)}` : ""}</p>` : "") + tableFor(g.rows)
+        )
+        .join("")
     : "<p>No products could be identified.</p>";
   const list = (title, items) => (items.length ? `<p><b>${title}</b></p><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>` : "");
 
   const html =
-    `<p><b>🤖 Auto-draft quote${dry ? " (dry run)" : ""}</b> - please review before sending.</p>` +
+    `<p><b>🤖 Auto-draft quote${multi ? "s" : ""}${dry ? " (dry run)" : ""}</b> - please review before sending.</p>` +
     `<p>${esc(result.summary)}</p>` +
-    (orderName ? `<p>Draft quotation created: <b>${esc(orderName)}</b></p>` : "") +
-    table +
+    (created.length
+      ? `<p>Draft quotation${created.length > 1 ? "s" : ""} created: ${created.map((c) => `<b>${esc(c.name)}</b>${multi ? ` (${esc(c.label)})` : ""}`).join(", ")}</p>`
+      : "") +
+    tables +
     list("Open questions", result.questions) +
     list("Warnings", warnings) +
-    `<p style="color:#888">tokens in/out: ${usage?.input_tokens ?? "?"}/${usage?.output_tokens ?? "?"}, cache read: ${usage?.cache_read_input_tokens ?? 0}</p>`;
+    `<p style="color:#888">tokens in/out: ${usage?.input_tokens ?? "?"}/${usage?.output_tokens ?? "?"}, cache write: ${usage?.cache_creation_input_tokens ?? 0}, cache read: ${usage?.cache_read_input_tokens ?? 0}</p>`;
 
+  const names = created.map((c) => c.name).join(", ");
   await odoo.call("crm.lead", "message_post", [[leadId]], { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" });
   await odoo.call("crm.lead", "activity_schedule", [[leadId]], {
     act_type_xmlid: "mail.mail_activity_data_todo",
-    summary: orderName ? `Review auto-drafted quote ${orderName}` : "Review auto-quote extraction",
+    summary: names ? `Review auto-drafted quote(s) ${names}` : "Review auto-quote extraction",
     user_id: lead.user_id?.[0] || odoo.uid,
   });
 }

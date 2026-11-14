@@ -8,6 +8,7 @@ Rules:
 - If a requested value is not in the catalog, still report what the customer said in "value"; do not invent a catalog value.
 - If a request is unclear or something cannot be quoted, put it in "questions" (for the customer/sales team).
 - Quantities default to 1 if not stated.
+- If the customer asks for several separate quotations/offers, give each line a quote_label naming its quotation. Otherwise leave quote_label out. Do not put "please split the offers" into questions when you have already split them using quote_label.
 Always answer by calling the submit_quote_request tool.`;
 
 const TOOL = {
@@ -24,6 +25,11 @@ const TOOL = {
           properties: {
             template_id: { type: "integer" },
             quantity: { type: "number" },
+            quote_label: {
+              type: "string",
+              description:
+                "Short name of the quotation this line belongs to (e.g. 'Classic', 'New'). Lines with the same label go on the same quotation. Use different labels ONLY if the customer explicitly asks for separate quotations/offers; otherwise omit this field.",
+            },
             stated_attributes: {
               type: "array",
               items: {
