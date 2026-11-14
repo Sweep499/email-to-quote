@@ -5,7 +5,9 @@ import { resolveConfig, esc, stripHtml } from "./resolve.js";
 export default {
   async fetch(request, env, ctx) {
     if (request.method !== "POST") return new Response("email-to-quote ok", { status: 200 });
-    if (request.headers.get("x-webhook-secret") !== env.WEBHOOK_SECRET) {
+    // Secret may come as a header or, if Odoo can't set headers, as ?secret=... in the URL.
+    const provided = request.headers.get("x-webhook-secret") ?? new URL(request.url).searchParams.get("secret");
+    if (!env.WEBHOOK_SECRET || provided !== env.WEBHOOK_SECRET) {
       return new Response("forbidden", { status: 403 });
     }
     let body;
@@ -99,13 +101,21 @@ async function processLead(env, leadId) {
   if (existing) return;
 
   // Original email = first incoming email message in the chatter (fallback: lead description).
-  const msgs = await odoo.search_read(
-    "mail.message",
-    [["model", "=", "crm.lead"], ["res_id", "=", leadId], ["message_type", "=", "email"]],
-    ["body", "subject"],
-    { order: "id asc", limit: 1 }
-  );
-  const emailText = stripHtml(msgs[0]?.body || lead.description || "");
+  // The webhook can fire before the mail gateway has posted the email into the chatter,
+  // so retry a few times before giving up.
+  let msgs = [];
+  let emailText = "";
+  for (let attempt = 0; attempt < 6; attempt++) {
+    msgs = await odoo.search_read(
+      "mail.message",
+      [["model", "=", "crm.lead"], ["res_id", "=", leadId], ["message_type", "=", "email"]],
+      ["body", "subject"],
+      { order: "id asc", limit: 1 }
+    );
+    emailText = stripHtml(msgs[0]?.body || lead.description || "");
+    if (emailText) break;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
   if (!emailText) throw new Error("No email text found on the lead");
   const subject = msgs[0]?.subject || lead.name || "";
 
