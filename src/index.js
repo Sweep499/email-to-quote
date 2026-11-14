@@ -87,19 +87,16 @@ async function findVariant(odoo, templateId, valueIds) {
   const found = await odoo.search_read("product.product", domain, ["id"], { limit: 1 });
   if (found[0]) return { id: found[0].id, reason: null };
 
-  // Dynamic variants: the combination may simply not exist yet. Ask Odoo to create it.
-  // The public method's argument format differs between versions, so try both forms.
-  let lastError = "";
-  for (const arg of [JSON.stringify(ptavIds), ptavIds]) {
-    try {
-      const id = await odoo.call("product.template", "create_product_variant", [[templateId], arg]);
-      if (id) return { id, reason: null };
-      lastError = "Odoo refused to create the variant (combination excluded or not allowed)";
-    } catch (e) {
-      lastError = e.message;
-    }
+  // Dynamic variants: the combination may simply not exist yet. Create the variant record
+  // directly (Odoo still validates the combination). Odoo 18 has no public RPC for this.
+  try {
+    const id = await odoo.call("product.product", "create", [
+      { product_tmpl_id: templateId, product_template_attribute_value_ids: [[6, 0, ptavIds]] },
+    ]);
+    return { id: Array.isArray(id) ? id[0] : id, reason: null };
+  } catch (e) {
+    return { id: null, reason: `variant does not exist and could not be created: ${e.message}` };
   }
-  return { id: null, reason: `variant does not exist and could not be created: ${lastError}` };
 }
 
 async function processLead(env, leadId) {
