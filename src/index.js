@@ -84,7 +84,6 @@ async function findVariant(odoo, templateId, valueIds) {
     return { id: null, reason: "some chosen values are not enabled on this product template" };
   }
   const domain = [["product_tmpl_id", "=", templateId], ...ptavIds.map((id) => ["product_template_attribute_value_ids", "=", id])];
-  // Also match variants that have exactly this many attribute values (not a superset).
   const found = await odoo.search_read("product.product", domain, ["id"], { limit: 1 });
   if (found[0]) return { id: found[0].id, reason: null };
 
