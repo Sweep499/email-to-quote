@@ -5,7 +5,7 @@ compatibility_date = "2025-01-01"
 [vars]
 CLAUDE_MODEL = "claude-sonnet-5-5"
 # Set to "true" to only post the extraction note in chatter (no draft quote)
-DRY_RUN = "true"
+DRY_RUN = "false"
 
 # Secrets (set with GitHub Action / wrangler secret put):
 #   WEBHOOK_SECRET, ANTHROPIC_API_KEY, ODOO_URL, ODOO_DB, ODOO_LOGIN, ODOO_API_KEY
