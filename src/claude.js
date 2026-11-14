@@ -56,6 +56,27 @@ const TOOL = {
   },
 };
 
+/**
+ * With tool_choice "auto" the model may leave out fields the schema marks required
+ * (smaller models do this). Fill in safe defaults so later code never crashes.
+ */
+export function normalizeResult(input) {
+  const r = input && typeof input === "object" ? input : {};
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  return {
+    summary: typeof r.summary === "string" ? r.summary : "",
+    questions: arr(r.questions).filter((q) => typeof q === "string"),
+    lines: arr(r.lines)
+      .filter((l) => l && typeof l === "object")
+      .map((l) => ({
+        ...l,
+        template_id: Number(l.template_id),
+        quantity: Number(l.quantity) > 0 ? Number(l.quantity) : 1,
+        stated_attributes: arr(l.stated_attributes).filter((s) => s && typeof s === "object"),
+      })),
+  };
+}
+
 export async function extractRequest(env, emailText, catalog) {
   // Compact text instead of JSON: same information, far fewer tokens.
   const catalogText = formatCatalog(catalog);
@@ -95,5 +116,5 @@ export async function extractRequest(env, emailText, catalog) {
   if (!r.ok) throw new Error(`Claude API ${r.status}: ${JSON.stringify(j).slice(0, 500)}`);
   const tu = j.content.find((c) => c.type === "tool_use");
   if (!tu) throw new Error("Claude returned no tool_use block");
-  return { result: tu.input, usage: j.usage };
+  return { result: normalizeResult(tu.input), usage: j.usage };
 }
