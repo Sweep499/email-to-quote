@@ -66,12 +66,13 @@ export async function extractRequest(env, emailText, catalog) {
       model: env.CLAUDE_MODEL || "claude-sonnet-5-5",
       max_tokens: 2000,
       system: [
-        { type: "text", text: SYSTEM },
+        { type: "text", text: `${SYSTEM}\n\nYou MUST respond only by calling the submit_quote_request tool exactly once. Never reply with plain text.` },
         // Catalog block is identical between emails -> cache it.
         { type: "text", text: `PRODUCT CATALOG (JSON):\n${catalogText}`, cache_control: { type: "ephemeral" } },
       ],
       tools: [TOOL],
-      tool_choice: { type: "tool", name: "submit_quote_request" },
+      // Forced tool_choice is rejected by some models; use auto and instruct in the system prompt.
+      tool_choice: { type: "auto" },
       messages: [{ role: "user", content: `<customer_email>\n${emailText.slice(0, 12000)}\n</customer_email>` }],
     }),
   });
