@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveConfig, stripHtml, unmatchedRequests, formatCatalog } from "../src/resolve.js";
+import { resolveConfig, stripHtml, unmatchedRequests, formatCatalog, renderLineView } from "../src/resolve.js";
 
 const tmpl = {
   id: 1, name: "Meet 2",
@@ -59,6 +59,16 @@ r = resolveConfig(tmpl2, [{ attribute: "Exterior Finish", value: "lack", evidenc
 assert.match(r.config[0].source, /unmatched/);
 r = resolveConfig(tmpl2, [{ attribute: "Exterior Finish", value: "(", evidence: "x" }]);
 assert.match(r.config[0].source, /unmatched/);
+
+// chatter view: chosen values in a table, defaults in one sentence, HTML escaped
+r = resolveConfig(tmpl, [{ attribute: "Color", value: "black", evidence: "in <black>" }]);
+const view = renderLineView("Meet 2:", 3, r.config);
+assert.match(view, /<b>3 × Meet 2<\/b>/);
+assert.match(view, /<b>Black<\/b>/);
+assert.match(view, /in &lt;black&gt;/);
+assert.match(view, /Defaults: Door: Standard/);
+assert.ok(!view.includes("Color: Oak"));
+assert.match(renderLineView("X", 1, resolveConfig(tmpl, []).config), /all defaults/);
 
 // compact catalog keeps ids and exact names
 const cat = formatCatalog([{ ...tmpl, attributes: tmpl.attributes }]);

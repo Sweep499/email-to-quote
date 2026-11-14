@@ -1,6 +1,6 @@
 import { Odoo } from "./odoo.js";
 import { extractRequest } from "./claude.js";
-import { resolveConfig, unmatchedRequests, esc, stripHtml } from "./resolve.js";
+import { resolveConfig, unmatchedRequests, renderLineView, esc, stripHtml } from "./resolve.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -26,17 +26,30 @@ export default {
         console.error("processLead failed", e);
         try {
           const odoo = new Odoo(env);
-          await odoo.call("crm.lead", "message_post", [[leadId]], {
-            body: `<p><b>Auto-quote failed:</b> ${esc(e.message)}</p>`,
-            message_type: "comment",
-            subtype_xmlid: "mail.mt_note",
-          });
+          await postNote(odoo, leadId, `<p><b>Auto-quote failed:</b> ${esc(e.message)}</p>`);
         } catch {}
       })
     );
     return new Response("accepted", { status: 202 });
   },
 };
+
+// Odoo escapes any HTML passed to message_post over RPC (tags would show as text), but the
+// Html field of mail.message accepts and sanitizes real HTML. So post a plain-text version
+// first, then write the HTML into the message. If the write fails the plain text remains.
+async function postNote(odoo, leadId, html) {
+  const posted = await odoo.call("crm.lead", "message_post", [[leadId]], {
+    body: stripHtml(html),
+    message_type: "comment",
+    subtype_xmlid: "mail.mt_note",
+  });
+  const messageId = Array.isArray(posted) ? posted[0] : posted;
+  try {
+    await odoo.call("mail.message", "write", [[messageId], { body: html }]);
+  } catch (e) {
+    console.error("could not write HTML body", e.message);
+  }
+}
 
 async function loadCatalog(odoo) {
   const templates = await odoo.search_read(
@@ -152,11 +165,11 @@ async function processLead(env, leadId) {
       continue;
     }
     const label = (l.quote_label || "").trim() || "Quote";
-    if (!groups.has(label)) groups.set(label, { quoteLines: [], flags: [], rows: [], orderName: null });
+    if (!groups.has(label)) groups.set(label, { quoteLines: [], flags: [], views: [], orderName: null });
     const g = groups.get(label);
 
     const { config, unmatched } = resolveConfig(tmpl, l.stated_attributes);
-    for (const c of config) g.rows.push({ product: tmpl.name, qty: l.quantity, ...c });
+    g.views.push({ product: tmpl.name, qty: l.quantity || 1, config });
     // Requests we could not honour (value not in catalog, unknown attribute): the line is still
     // created with defaults, but marked so nobody sends it unchecked.
     const flags = unmatchedRequests(config, unmatched);
@@ -218,14 +231,12 @@ async function processLead(env, leadId) {
   }
 
   // Review note in chatter
-  const tableFor = (rows) =>
-    `<table border="1" cellpadding="4" style="border-collapse:collapse"><tr><th>Product</th><th>Qty</th><th>Attribute</th><th>Value</th><th>Source</th><th>Evidence</th></tr>${rows
-      .map((r) => `<tr><td>${esc(r.product)}</td><td>${esc(r.qty)}</td><td>${esc(r.attribute)}</td><td>${esc(r.value)}</td><td>${esc(r.source)}</td><td>${esc(r.evidence)}</td></tr>`)
-      .join("")}</table>`;
   const tables = groups.size
     ? [...groups]
-        .map(([label, g]) =>
-          (multi ? `<p><b>${esc(label)}</b>${g.orderName ? ` - ${esc(g.orderName)}` : ""}</p>` : "") + tableFor(g.rows)
+        .map(
+          ([label, g]) =>
+            (multi ? `<hr/><p><b>${esc(label)}</b>${g.orderName ? ` - ${esc(g.orderName)}` : ""}</p>` : "") +
+            g.views.map((v) => renderLineView(v.product, v.qty, v.config)).join("")
         )
         .join("")
     : "<p>No products could be identified.</p>";
@@ -243,7 +254,7 @@ async function processLead(env, leadId) {
     `<p style="color:#888">tokens in/out: ${usage?.input_tokens ?? "?"}/${usage?.output_tokens ?? "?"}, cache write: ${usage?.cache_creation_input_tokens ?? 0}, cache read: ${usage?.cache_read_input_tokens ?? 0}</p>`;
 
   const names = created.map((c) => c.name).join(", ");
-  await odoo.call("crm.lead", "message_post", [[leadId]], { body: html, message_type: "comment", subtype_xmlid: "mail.mt_note" });
+  await postNote(odoo, leadId, html);
   await odoo.call("crm.lead", "activity_schedule", [[leadId]], {
     act_type_xmlid: "mail.mail_activity_data_todo",
     summary: names ? `Review auto-drafted quote(s) ${names}` : "Review auto-quote extraction",

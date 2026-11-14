@@ -96,6 +96,29 @@ export function formatCatalog(catalog) {
     .join("\n\n");
 }
 
+/**
+ * Chatter HTML for one quote line: a heading, a small table of what the customer chose
+ * (stated / assumed / not available), and ONE sentence listing the defaults.
+ */
+export function renderLineView(product, qty, config) {
+  const chosen = config.filter((c) => c.source !== "default");
+  const defaults = config.filter((c) => c.source === "default" && c.value);
+  const th = "text-align:left;padding:2px 10px 2px 0";
+  const td = "padding:2px 10px 2px 0;vertical-align:top";
+  const table = chosen.length
+    ? `<table style="border-collapse:collapse"><tr><th style="${th}">Attribute</th><th style="${th}">Value used</th><th style="${th}">Source</th><th style="${th}">Customer said</th></tr>${chosen
+        .map(
+          (c) =>
+            `<tr><td style="${td}">${esc(c.attribute)}</td><td style="${td}"><b>${esc(c.value)}</b></td><td style="${td}">${esc(c.source)}</td><td style="${td}">${esc(c.evidence)}</td></tr>`
+        )
+        .join("")}</table>`
+    : "<p><i>Nothing specific requested - all defaults.</i></p>";
+  const defs = defaults.length
+    ? `<p><span style="color:#777">Defaults: ${defaults.map((c) => `${esc(c.attribute)}: ${esc(c.value)}`).join(" · ")}</span></p>`
+    : "";
+  return `<p><b>${esc(qty)} × ${esc(String(product).replace(/:\s*$/, ""))}</b></p>${table}${defs}`;
+}
+
 export function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
