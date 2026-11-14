@@ -90,7 +90,10 @@ export async function extractRequest(env, emailText, catalog) {
       },
       body: JSON.stringify({
         model: env.CLAUDE_MODEL || "claude-sonnet-5-5",
-        max_tokens: 2000,
+        // Thinking tokens count against this cap, so leave room: a cut-off tool call = no products.
+        max_tokens: 8000,
+        // Optional reasoning effort (low | medium | high); omit to use the model's default.
+        ...(env.EFFORT ? { output_config: { effort: env.EFFORT } } : {}),
         system: [
           { type: "text", text: `${SYSTEM}\n\nYou MUST respond only by calling the submit_quote_request tool exactly once. Never reply with plain text.` },
           // Catalog block is identical between emails -> cache it.
@@ -114,6 +117,9 @@ export async function extractRequest(env, emailText, catalog) {
   if (r.status === 400 && ttl) r = await call({ type: "ephemeral" });
   const j = await r.json();
   if (!r.ok) throw new Error(`Claude API ${r.status}: ${JSON.stringify(j).slice(0, 500)}`);
+  if (j.stop_reason === "max_tokens") {
+    throw new Error(`Claude ran out of output tokens before finishing (used ${j.usage?.output_tokens}); raise max_tokens or lower EFFORT`);
+  }
   const tu = j.content.find((c) => c.type === "tool_use");
   if (!tu) throw new Error("Claude returned no tool_use block");
   return { result: normalizeResult(tu.input), usage: j.usage };

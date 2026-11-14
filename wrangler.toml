@@ -4,6 +4,8 @@ compatibility_date = "2025-01-01"
 
 [vars]
 CLAUDE_MODEL = "claude-haiku-5-5"
+# Reasoning effort for the extraction call (low | medium | high). Lower = cheaper and faster.
+EFFORT = "low"
 # Set to "true" to only post the extraction note in chatter (no draft quote)
 DRY_RUN = "false"
 
