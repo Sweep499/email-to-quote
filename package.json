@@ -1,0 +1,14 @@
+{
+  "name": "email-to-quote",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test": "node test/resolve.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}
